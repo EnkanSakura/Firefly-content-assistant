@@ -14,7 +14,7 @@ UI_FONT_SIZE = 13
 # 样式表（暗色主题）
 APP_STYLESHEET = """
 QMainWindow {
-    background-color: #1e1e2e;
+    background-color: transparent;
     color: #cdd6f4;
 }
 QMenuBar {
