@@ -227,7 +227,6 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._normal_geometry = None
 
         # 预览图片缓存（远程图片 → base64 data URI）
@@ -256,7 +255,6 @@ class MainWindow(QMainWindow):
         self._title_bar.setObjectName("titleBar")
         self._title_bar.setStyleSheet(
             "#titleBar { background-color: #181825;"
-            "border-top-left-radius: 8px; border-top-right-radius: 8px;"
             "border-bottom: 1px solid #313244; }"
         )
         self._title_bar.setCursor(Qt.CursorShape.ArrowCursor)
@@ -370,7 +368,6 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(cb)
             tb_layout.addWidget(btn)
 
-
         tb_layout.addStretch()
 
         # 窗口控制按钮（Windows 默认风格）
@@ -387,97 +384,43 @@ class MainWindow(QMainWindow):
             btn.setToolTip(tip)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none;"
+                "QPushButton { color: #cdd6f4; background: transparent; border: none;"
                 "border-radius: 4px; }"
                 "QPushButton:hover { background: #313244; }"
+                "QPushButton:pressed { background: #45475a; }"
             )
             if sp_icon == QStyle.StandardPixmap.SP_TitleBarCloseButton:
                 btn.setStyleSheet(
-                    "QPushButton { background: transparent; border: none;"
+                    "QPushButton { color: #cdd6f4; background: transparent; border: none;"
                     "border-radius: 4px; }"
                     "QPushButton:hover { background: #e06c75; }"
+                    "QPushButton:pressed { background: #d05565; }"
                 )
             btn.clicked.connect(slot)
             tb_layout.addWidget(btn)
 
-        # 拖拽支持
+        # 拖拽支持（使用 Windows 原生处理，自动支持 Aero Snap + 双击最大化）
         self._title_bar.mousePressEvent = self._title_bar_press
-        self._title_bar.mouseMoveEvent = self._title_bar_move
-        self._title_bar.mouseReleaseEvent = self._title_bar_release
-        self._title_bar.mouseDoubleClickEvent = self._title_bar_dblclick
 
     def _title_bar_press(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint()
+            if self.windowState() != Qt.WindowState.WindowNoState:
+                return  # 最大化时不允许拖动标题栏
+            # Use Qt's system move (enables Aero Snap + double-click maximize natively)
+            self.window().windowHandle().startSystemMove()
     
-    def _title_bar_move(self, event) -> None:
-        if hasattr(self, '_drag_pos'):
-            delta = event.globalPosition().toPoint() - self._drag_pos
-            self.move(self.pos() + delta)
-            self._drag_pos = event.globalPosition().toPoint()
-
-    def _title_bar_release(self, event) -> None:
-        if hasattr(self, '_drag_pos'):
-            del self._drag_pos
-
-    def _title_bar_dblclick(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._toggle_maximize()
-            if hasattr(self, '_drag_pos'):
-                del self._drag_pos
-
     def _toggle_maximize(self) -> None:
-        if self.isMaximized():
-            self.showNormal()
-        else:
+        print("toggle max", self.windowState())
+        if self.windowState() == Qt.WindowState.WindowNoState:
             self._normal_geometry = self.geometry()
-            self.showMaximized()
-
-    def _update_maximize_style(self) -> None:
-        """最大化时移除圆角和边距，恢复时加回。"""
-        maximized = self.isMaximized()
-        # 更新中央布局边距
-        cw = self.centralWidget()
-        if cw and cw.layout():
-            m = 0 if maximized else 8
-            cw.layout().setContentsMargins(m, m, m, 0)
-        # 更新标题栏圆角
-        if maximized:
-            self._title_bar.setStyleSheet(
-                "#titleBar { background-color: #181825;"
-                "border-bottom: 1px solid #313244; }"
-            )
+            self.setWindowState(Qt.WindowState.WindowMaximized)
         else:
-            self._title_bar.setStyleSheet(
-                "#titleBar { background-color: #181825;"
-                "border-top-left-radius: 8px; border-top-right-radius: 8px;"
-                "border-bottom: 1px solid #313244; }"
-            )
-        # 更新内容容器圆角
-        if maximized:
-            self._content_frame.setStyleSheet(
-                "#contentFrame { background-color: #1e1e2e; border: none; }"
-            )
-        else:
-            self._content_frame.setStyleSheet(
-                "#contentFrame { background-color: #1e1e2e; border: none;"
-                "border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }"
-            )
-        # 更新状态栏圆角
-        if maximized:
-            self._status.setStyleSheet(
-                "background-color: #181825; border-top: 1px solid #313244;"
-            )
-        else:
-            self._status.setStyleSheet(
-                "background-color: #181825; border-top: 1px solid #313244;"
-                "border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;"
-            )
+            self.setWindowState(Qt.WindowState.WindowNoState)
+            if self._normal_geometry is not None:
+                self.setGeometry(self._normal_geometry)
+        print(self.windowState())
 
     def changeEvent(self, event) -> None:
-        if event.type() == QEvent.Type.WindowStateChange:
-            pass  # state handled by isMaximized() directly
-            self._update_maximize_style()
         super().changeEvent(event)
 
     def moveEvent(self, event) -> None:
@@ -491,14 +434,49 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
 
     def nativeEvent(self, eventType, message) -> tuple[bool, int]:
-        """处理 WM_NCCALCSIZE 和 WM_NCHITTEST。"""
+        """Handle WM_NCCALCSIZE / WM_NCHITTEST / WM_GETMINMAXINFO."""
         msg = ctypes.cast(int(message), ctypes.POINTER(wintypes.MSG)).contents
-        if msg.message == 0x0083:  # WM_NCCALCSIZE — 消除非客户区边框
-            return True, 0
-        if msg.message == 0x0084:  # WM_NCHITTEST — 边框拖拽 / Aero Snap
+        if msg.message == 0x0083:  # WM_NCCALCSIZE
+            if msg.wParam:  # TRUE — need valid client rect; keep full window as client
+                return True, 0
+            return True, 0  # FALSE — remove all non-client borders
+        if msg.message == 0x0084:  # WM_NCHITTEST
             result = self._hit_test(msg)
             return True, result
+        if msg.message == 0x0024:  # WM_GETMINMAXINFO
+            self._fix_maximize_bounds(int(message))
+            return True, 0
         return False, 0
+
+    def _fix_maximize_bounds(self, lParam: int) -> None:
+        """Clamp maximize to monitor work area (avoid taskbar overlap)."""
+        class MINMAXINFO(ctypes.Structure):
+            _fields_ = [
+                ("ptReserved", wintypes.POINT), ("ptMaxSize", wintypes.POINT),
+                ("ptMaxPosition", wintypes.POINT), ("ptMinTrackSize", wintypes.POINT),
+                ("ptMaxTrackSize", wintypes.POINT),
+            ]
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD),
+            ]
+        mmi = ctypes.cast(lParam, ctypes.POINTER(MINMAXINFO)).contents
+        hMonitor = ctypes.windll.user32.MonitorFromWindow(
+            self.winId().__int__(), 1  # MONITOR_DEFAULTTONEAREST
+        )
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        ctypes.windll.user32.GetMonitorInfoW(hMonitor, ctypes.byref(mi))
+        mmi.ptMaxPosition.x = mi.rcWork.left
+        mmi.ptMaxPosition.y = mi.rcWork.top
+        mmi.ptMaxSize.x = mi.rcWork.right - mi.rcWork.left
+        mmi.ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top
+        # Also clamp max tracking size to virtual screen
+        mmi.ptMaxTrackSize.x = mi.rcWork.right - mi.rcWork.left
+        mmi.ptMaxTrackSize.y = mi.rcWork.bottom - mi.rcWork.top
 
     def _hit_test(self, msg) -> int:
         """返回 WM_NCHITTEST 结果。
@@ -516,10 +494,8 @@ class MainWindow(QMainWindow):
         rx, ry = px - fg.x(), py - fg.y()
         w, h = fg.width(), fg.height()
 
-        maximized = self.isMaximized()
-
         # 标题栏（包括按钮区域）—— 始终可拖拽
-        margin = 0 if maximized else 8
+        margin = 0
         tb_h = self._title_bar.height() + margin
         if margin <= rx < w - margin and margin <= ry < tb_h:
             # 检查鼠标下是否有子控件（按钮等），如有则不拦截点击
@@ -533,7 +509,7 @@ class MainWindow(QMainWindow):
             return 2  # HTCAPTION
 
         # 最大化时不允许拖拽边框调整大小
-        if maximized:
+        if self.windowState() != Qt.WindowState.WindowNoState:
             return 1  # HTCLIENT
 
         on_left = rx < BORDER and rx >= 0
@@ -566,7 +542,7 @@ class MainWindow(QMainWindow):
         cw.setStyleSheet("#centralWidget { background: transparent; }")
         self.setCentralWidget(cw)
         root = QVBoxLayout(cw)
-        root.setContentsMargins(8, 8, 8, 0)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # 自定义标题栏
@@ -577,8 +553,7 @@ class MainWindow(QMainWindow):
         content_frame.setObjectName("contentFrame")
         self._content_frame = content_frame
         content_frame.setStyleSheet(
-            "#contentFrame { background-color: #1e1e2e; border: none;"
-            "border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }"
+            "#contentFrame { background-color: #1e1e2e; border: none; }"
         )
         self._frame_layout = frame_layout = QVBoxLayout(content_frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
@@ -631,10 +606,10 @@ class MainWindow(QMainWindow):
             ("H1", "# ", "一级标题 — 在行首插入 #"),
             ("H2", "## ", "二级标题 — 在行首插入 ##"),
             ("H3", "### ", "三级标题 — 在行首插入 ###"),
-            ("**B**", "**", "粗体 — 用 ** 包裹选中文本"),
-            ("_I_", "_", "斜体 — 用 _ 包裹选中文本"),
-            ("~~S~~", "~~", "删除线 — 用 ~~ 包裹选中文本"),
-            ("`", "`", "行内代码 — 用 ` 包裹选中文本"),
+            ("粗体", "**", "粗体 — 用 ** 包裹选中文本"),
+            ("斜体", "_", "斜体 — 用 _ 包裹选中文本"),
+            ("删除", "~~", "删除线 — 用 ~~ 包裹选中文本"),
+            ("行内代码", "`", "行内代码 — 用 ` 包裹选中文本"),
         ]
         for label, prefix, tip in basic_btns:
             btn = _make_btn(label, tip)
@@ -680,17 +655,6 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        # 底部操作
-        ops_btns = [
-            ("生成\nFrontmatter", self._generate_frontmatter, "生成/更新 Frontmatter"),
-            ("预览", self._toggle_preview, "切换预览面板"),
-        ]
-        for label, callback, tip in ops_btns:
-            btn = _make_btn(label, tip)
-            btn.setFixedHeight(44)
-            btn.clicked.connect(callback)
-            layout.addWidget(btn)
-
         return container
 
     # ── 状态栏 ──────────────────────────────────────
@@ -699,7 +663,6 @@ class MainWindow(QMainWindow):
         self._status.setFixedHeight(28)
         self._status.setStyleSheet(
             "background-color: #181825; border-top: 1px solid #313244;"
-            "border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;"
         )
         status_layout = QHBoxLayout(self._status)
         status_layout.setContentsMargins(12, 0, 12, 0)
@@ -983,12 +946,6 @@ class MainWindow(QMainWindow):
         if pmax > 0:
             preview_sb.setValue(int(ratio * pmax))
 
-    # ── 预览切换 ──────────────────────────────────
-    def _toggle_preview(self) -> None:
-        visible = not self._preview.isVisible()
-        self._preview.setVisible(visible)
-        if visible:
-            self._update_preview()
 
     # ── Firefly 扩展语法 → HTML ─────────────────────
     @staticmethod
@@ -1343,9 +1300,6 @@ class MainWindow(QMainWindow):
         )
         self._preview.setHtml(styled)
 
-        # 恢复预览滚动位置，减少抖动
-        if saved_scroll > 0 and preview_sb:
-            preview_sb.setValue(min(saved_scroll, preview_sb.maximum()))
 
     # ── 关于 ──────────────────────────────────────
     def _about(self) -> None:
